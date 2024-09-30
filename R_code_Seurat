@@ -1,0 +1,205 @@
+#load the packages
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.19")
+BiocManager::install("Seurat")
+library(Seurat)
+BiocManager::install("SeuratDisk", force = TRUE)
+library(SeuratDisk)
+BiocManager::install("SeuratObject", force = TRUE)
+library(SeuratObject)
+BiocManager::install("tidyverse")
+library(tidyverse)
+BiocManager::install("ggplot2", force = TRUE)
+library(ggplot2)
+BiocManager::install("scCustomize", force = TRUE)
+library(scCustomize)
+#note that BiocManager install only required once to install on your disc. In the later uses, only use library function
+
+#to load the rds file into project
+#this will work only if the file provided by the researchers is .rds See below for the other file types
+GSENo_or_whtever <- file.choose("file/directory")
+s_obj <- readRDS(GSENo_or_whtever)
+
+#files can be provided as 10x read files, which consists of counts.mtx, features.csv, genes.csv. Do as the following:
+data_dir <- "data/directory"
+list.files(data_dir) # Should show features.tsv, genes.tsv, and matrix.mtx but sometimes features if written as barcodes, in this case change the name
+project_name <- Read10X(data.dir = data_dir)
+project_name_seuratobj = CreateSeuratObject(counts = project_name)
+
+# load libraries
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.19")
+
+BiocManager::install("sp")
+packageVersion("Seurat")
+BiocManager::install("Seurat")
+library(Seurat)
+BiocManager::install("SeuratDisk", force = TRUE)
+library(SeuratDisk)
+BiocManager::install("SeuratObject", force = TRUE)
+library(SeuratObject)
+BiocManager::install("tidyverse")
+library(tidyverse)
+BiocManager::install("ggplot2", force = TRUE)
+library(ggplot2)
+BiocManager::install("scCustomize", force = TRUE)
+library(scCustomize)
+
+# .loom files - ignore if you are not working with loom file
+loom_obj <- Connect(filename = "s_fca_biohub_antenna_10x.loom")
+seurat_ant <- as.Seurat(loom_obj)
+
+#create seurat object by manually
+loom <- 's_fca_biohub_antenna_10x.loom'
+s_cnct <- Connect(filename = loom, mode = "r")
+
+n_genes <- s_cnct[['row_attrs']][['Gene']][['dims']]
+gns <- s_cnct[['row_attrs']][['Gene']][1:n_genes]
+
+n_cells <- s_cnct[['col_attrs']][['CellID']][['dims']]
+cellids <- s_cnct[['col_attrs']][['CellID']][1:n_cells]
+
+raw.cnts <- as.data.frame(t(s_cnct[['matrix']][,] ))
+names(raw.cnts) <- cellids
+rownames(raw.cnts) <- gns
+metadata <- data.frame(
+  cellID = cellids,
+  ClusterID = s_cnct[['col_attrs']][['ClusterID']][1:n_cells],
+  annotation = s_cnct[['col_attrs']][['R_annotation']][1:n_cells]
+)
+
+rownames(metadata) <- cellids
+s_obj <- CreateSeuratObject(counts = raw.cnts,
+                            project = "fromLoom",
+                            assay = "RNA",
+                            meta.data = metadata)
+#####
+s_obj <- GSE235110_Larval_eye_scRNA
+str(s_obj)
+
+DefaultAssay(s_obj) <- "RNA"
+DefaultAssay(s_obj2) <- "RNA"
+
+
+# Initialize the Seurat object with the raw (non-normalized data).
+nsclc.seurat.obj <- CreateSeuratObject(counts = cts, project = "NSCLC", min.cells = 3, min.features = 200)
+str(nsclc.seurat.obj)
+nsclc.seurat.obj
+
+
+# 1. QC -------
+View(s_obj@meta.data)
+
+# % MT reads
+s_obj[["percent.mt"]] <- PercentageFeatureSet(s_obj, pattern = "^MT-")
+View(s_obj@meta.data)
+
+VlnPlot(s_obj, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+FeatureScatter(s_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+  geom_smooth(method = 'lm')
+
+# 2. Filtering -----------------
+s_obj <- subset(s_obj, subset = nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+# 3. Normalize data ----------
+#nsclc.seurat.obj <- NormalizeData(nsclc.seurat.obj, normalization.method = "LogNormalize", scale.factor = 10000)
+# OR
+s_obj2 <- NormalizeData(s_obj2, normalization.method = "LogNormalize", scale.factor = 10000)
+str(nsclc.seurat.obj)
+
+
+# 4. Identify highly variable features --------------
+s_obj <- FindVariableFeatures(s_obj, selection.method = "vst", nfeatures = 2000)
+s_obj2 <- FindVariableFeatures(s_obj2, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(s_obj), 10)
+top10_2 <- head(VariableFeatures(s_obj2), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(s_obj)
+plot1_2 <- VariableFeaturePlot(s_obj2)
+LabelPoints(plot = plot1, points = top10, repel = TRUE)
+LabelPoints(plot = plot1_2, points = top10_2, repel = TRUE)
+
+# 5. Scaling -------------
+all.genes <- rownames(s_obj)
+s_obj2 <- ScaleData(s_obj2, features = all.genes)
+
+str(nsclc.seurat.obj)
+
+# 6. Perform Linear dimensionality reduction --------------
+s_obj <- RunPCA(s_obj, features = VariableFeatures(object = s_obj))
+
+# visualize PCA results
+print(s_obj[["pca"]], dims = 1:100, nfeatures = 100)
+DimHeatmap(s_obj, dims = 1:2, cells = 5000, balanced = TRUE)
+
+
+# determine dimensionality of the data
+ElbowPlot(s_obj)
+ElbowPlot(s_obj2)
+
+# 7. Clustering ------------
+s_obj <- FindNeighbors(s_obj, dims = 1:15)
+
+# understanding resolution
+s_obj <- FindClusters(s_obj, resolution = c(0.1,0.3, 0.5, 0.7, 1))
+View(s_obj@meta.data)
+
+DimPlot(s_obj, label = TRUE)
+DimPlot(s_obj2, label = TRUE)
+
+# setting identity of clusters
+Idents(s_obj)
+Idents(s_obj) <- "seurat_clusters"
+Idents(s_obj)
+
+# non-linear dimensionality reduction --------------
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+library(reticulate)
+reticulate::py_install('umap-learn')
+s_obj <- RunUMAP(s_obj, dims = 1:15)
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+Idents(s_obj) <- metadata
+DimPlot(s_obj, reduction = "umap", label = TRUE)
+
+rm(s_obj2)
+#see the regulons that express your gene of interest
+DefaultAssay(s_obj2) <- "SCT"
+FeaturePlot(s_obj, features = c('CG7985'), min.cutoff = 'q1', pt.size = 1, order = TRUE)
+
+#average expression by cluster class and write to a table
+#n-glycosylation related genes
+FeaturePlot(s_obj, features = n_glyco_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+avg_exp_s_obj <- AverageExpression(s_obj)
+n_glyco_genes <- c("Ost48", "Ostgamma", "Dad1", "Stt3A", "Stt3B", "GCS1", "GCS2alpha", "GCS2beta", "alpha-Man-Ia", "alpha-Man-Ib", "alpha-Man-Ic", "Mgat1", "alpha-Man-IIa", "alpha-Man-IIb", "fdl", "FucT6", "FucTA", "Mgat2", "GalT1", "beta4GalNAcTA", "Hexo1", "CG7985", "CG10778", "Tango14", "xit")
+
+subsample_nglyco <- subset(s_obj, features = n_glyco_genes)
+avg_exp_subsample_nglyco <- AverageExpression(subsample_nglyco)
+
+df <- as.data.frame(as.matrix(avg_exp_subsample_nglyco[["RNA"]]))
+write.csv(df,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/nglyco_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = n_glyco_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+VlnPlot(s_obj, features = "HexDC")
+
+aggexp_n_glyco <- AggregateExpression(s_obj, features = n_glyco_genes)
+df1_1 <- as.data.frame(as.matrix(aggexp_n_glyco[["RNA"]]))
+write.csv(df1_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/nglyco_list_agg.csv", row.names = TRUE)
+
+library(Seurat)
+library(dplyr)
+library(magrittr)
+
+DefaultAssay(s_obj) <- "RNA"
+DefaultAssay(s_obj) <- "SCT"
+DotPlot(object = s_obj, features = n_glyco_genes)
+plot_nglyco <- DotPlot(object = s_obj, features = n_glyco_genes)
+plot_data_nglyco <- plot_nglyco$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_nglyco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/nglyco.csv", row.names = TRUE)
