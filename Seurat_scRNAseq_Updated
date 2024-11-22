@@ -1,0 +1,1041 @@
+#to load the rds file into project
+GSE235110 <- file.choose("C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023/GSE235110_Larval_eye_scRNA.rds")
+s_obj <- readRDS(GSE235110)
+
+#s_obj2 will be non-normalized
+s_obj2 <- readRDS(GSE235110)
+
+# load libraries
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.19")
+
+BiocManager::install("sp")
+packageVersion("Seurat")
+BiocManager::install("Seurat")
+library(Seurat)
+BiocManager::install("SeuratDisk", force = TRUE)
+library(SeuratDisk)
+BiocManager::install("SeuratObject", force = TRUE)
+library(SeuratObject)
+BiocManager::install("tidyverse")
+library(tidyverse)
+BiocManager::install("ggplot2", force = TRUE)
+library(ggplot2)
+BiocManager::install("scCustomize", force = TRUE)
+library(scCustomize)
+BiocManager::install("scCustomize", force = TRUE)
+library(GENIE3)
+
+# .loom files - ignore if you are not working with loom file
+loom_obj <- Connect(filename = "s_fca_biohub_antenna_10x.loom")
+seurat_ant <- as.Seurat(loom_obj)
+
+#create seurat object by manually
+loom <- 's_fca_biohub_antenna_10x.loom'
+s_cnct <- Connect(filename = loom, mode = "r")
+
+n_genes <- s_cnct[['row_attrs']][['Gene']][['dims']]
+gns <- s_cnct[['row_attrs']][['Gene']][1:n_genes]
+
+n_cells <- s_cnct[['col_attrs']][['CellID']][['dims']]
+cellids <- s_cnct[['col_attrs']][['CellID']][1:n_cells]
+
+raw.cnts <- as.data.frame(t(s_cnct[['matrix']][,] ))
+names(raw.cnts) <- cellids
+rownames(raw.cnts) <- gns
+metadata <- data.frame(
+  cellID = cellids,
+  ClusterID = s_cnct[['col_attrs']][['ClusterID']][1:n_cells],
+  annotation = s_cnct[['col_attrs']][['R_annotation']][1:n_cells]
+)
+
+rownames(metadata) <- cellids
+s_obj <- CreateSeuratObject(counts = raw.cnts,
+                            project = "fromLoom",
+                            assay = "RNA",
+                            meta.data = metadata)
+#####
+s_obj <- GSE235110_Larval_eye_scRNA
+str(s_obj)
+
+DefaultAssay(s_obj) <- "RNA"
+DefaultAssay(s_obj2) <- "RNA"
+
+
+# Initialize the Seurat object with the raw (non-normalized data).
+nsclc.seurat.obj <- CreateSeuratObject(counts = cts, project = "NSCLC", min.cells = 3, min.features = 200)
+str(nsclc.seurat.obj)
+nsclc.seurat.obj
+
+
+# 1. QC -------
+View(s_obj@meta.data)
+
+# % MT reads
+s_obj[["percent.mt"]] <- PercentageFeatureSet(s_obj, pattern = "^MT-")
+View(s_obj@meta.data)
+
+VlnPlot(s_obj, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+FeatureScatter(s_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+  geom_smooth(method = 'lm')
+
+# 2. Filtering -----------------
+s_obj <- subset(s_obj, subset = nFeature_RNA > 100 & nFeature_RNA < 5000)
+
+# 3. Normalize data ----------
+#nsclc.seurat.obj <- NormalizeData(nsclc.seurat.obj, normalization.method = "LogNormalize", scale.factor = 10000)
+# OR
+s_obj2 <- NormalizeData(s_obj2, normalization.method = "LogNormalize", scale.factor = 10000)
+str(nsclc.seurat.obj)
+
+
+# 4. Identify highly variable features --------------
+s_obj <- FindVariableFeatures(s_obj, selection.method = "vst", nfeatures = 2000)
+s_obj2 <- FindVariableFeatures(s_obj2, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(s_obj), 10)
+top10_2 <- head(VariableFeatures(s_obj2), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(s_obj)
+plot1_2 <- VariableFeaturePlot(s_obj2)
+LabelPoints(plot = plot1, points = top10, repel = TRUE)
+LabelPoints(plot = plot1_2, points = top10_2, repel = TRUE)
+
+# 5. Scaling -------------
+all.genes <- rownames(s_obj)
+s_obj2 <- ScaleData(s_obj2, features = all.genes)
+
+str(nsclc.seurat.obj)
+
+# 6. Perform Linear dimensionality reduction --------------
+s_obj <- RunPCA(s_obj, features = VariableFeatures(object = s_obj))
+
+# visualize PCA results
+print(s_obj[["pca"]], dims = 1:100, nfeatures = 100)
+DimHeatmap(s_obj, dims = 1:2, cells = 5000, balanced = TRUE)
+
+
+# determine dimensionality of the data
+ElbowPlot(s_obj)
+ElbowPlot(s_obj2)
+
+# 7. Clustering ------------
+s_obj <- FindNeighbors(s_obj, dims = 1:15)
+
+# understanding resolution
+s_obj <- FindClusters(s_obj, resolution = c(0.1,0.3, 0.5, 0.7, 1))
+View(s_obj@meta.data)
+
+DimPlot(s_obj, label = TRUE)
+DimPlot(s_obj2, label = TRUE)
+
+# setting identity of clusters
+Idents(s_obj)
+Idents(s_obj) <- "seurat_clusters"
+Idents(s_obj)
+
+# non-linear dimensionality reduction --------------
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+library(reticulate)
+reticulate::py_install('umap-learn')
+s_obj <- RunUMAP(s_obj, dims = 1:15)
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+Idents(s_obj) <- metadata
+DimPlot(s_obj, reduction = "umap", label = TRUE)
+
+rm(s_obj2)
+#see the regulons that express your gene of interest
+DefaultAssay(s_obj2) <- "SCT"
+FeaturePlot(s_obj, features = c('CG7985'), min.cutoff = 'q1', pt.size = 1, order = TRUE)
+
+#average expression by cluster class and write to a table
+#n-glycosylation related genes
+FeaturePlot(s_obj, features = n_glyco_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+avg_exp_s_obj <- AverageExpression(s_obj)
+n_glyco_genes <- c("Ost48", "Ostgamma", "Dad1", "Stt3A", "Stt3B", "GCS1", "GCS2alpha", "GCS2beta", "alpha-Man-Ia", "alpha-Man-Ib", "alpha-Man-Ic", "Mgat1", "alpha-Man-IIa", "alpha-Man-IIb", "fdl", "FucT6", "FucTA", "Mgat2", "GalT1", "beta4GalNAcTA", "Hexo1", "CG7985", "CG10778", "Tango14", "xit")
+
+subsample_nglyco <- subset(s_obj, features = n_glyco_genes)
+avg_exp_subsample_nglyco <- AverageExpression(subsample_nglyco)
+
+df <- as.data.frame(as.matrix(avg_exp_subsample_nglyco[["RNA"]]))
+write.csv(df,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/nglyco_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = n_glyco_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+VlnPlot(s_obj, features = "HexDC")
+
+aggexp_n_glyco <- AggregateExpression(s_obj, features = n_glyco_genes)
+df1_1 <- as.data.frame(as.matrix(aggexp_n_glyco[["RNA"]]))
+write.csv(df1_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/nglyco_list_agg.csv", row.names = TRUE)
+
+library(Seurat)
+library(dplyr)
+library(magrittr)
+
+DefaultAssay(s_obj) <- "RNA"
+DefaultAssay(s_obj) <- "SCT"
+DotPlot(object = s_obj, features = n_glyco_genes)
+plot_nglyco <- DotPlot(object = s_obj, features = n_glyco_genes)
+plot_data_nglyco <- plot_nglyco$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_nglyco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/nglyco.csv", row.names = TRUE)
+
+
+#musin-type o-glycosylation
+FeaturePlot(s_obj, features = o_glyco_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+
+o_glyco_genes <- c("C1GalTA", "CG2975", "CG3119", "CG8708", "CG34056", "CG34057", "CG34451", "CG34452")
+
+subsample_oglyco <- subset(s_obj, features = o_glyco_genes)
+avg_exp_subsample_oglyco <- AverageExpression(subsample_oglyco)
+
+df2 <- as.data.frame(as.matrix(avg_exp_subsample_oglyco[["RNA"]]))
+write.csv(df2,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/oglyco_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = o_glyco_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+VlnPlot(s_obj, features = "CG7985")
+
+aggexp_o_glyco <- AggregateExpression(s_obj, features = o_glyco_genes)
+df2_1 <- as.data.frame(as.matrix(aggexp_o_glyco[["RNA"]]))
+write.csv(df2_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/oglyco_list_agg.csv", row.names = TRUE)
+
+DefaultAssay(s_obj) <- "RNA"
+DotPlot(object = s_obj, features = o_glyco_genes)
+plot_oglyco <- DotPlot(object = s_obj, features = o_glyco_genes)
+plot_data_oglyco <- plot_oglyco$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_oglyco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/oglyco.csv", row.names = TRUE)
+
+
+#o-fucosylation
+FeaturePlot(s_obj, features = o_fuco_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+
+o_fuco_genes <- c("O-fut1", "fng", "N")
+
+subsample_ofuco <- subset(s_obj, features = o_fuco_genes)
+avg_exp_subsample_ofuco <- AverageExpression(subsample_ofuco)
+
+df3 <- as.data.frame(as.matrix(avg_exp_subsample_ofuco[["RNA"]]))
+write.csv(df3,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/ofuco_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = o_fuco_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+aggexp_o_fuco <- AggregateExpression(s_obj, features = o_fuco_genes)
+df3_1 <- as.data.frame(as.matrix(aggexp_o_fuco[["RNA"]]))
+write.csv(df3_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/ofuco_list_agg.csv", row.names = TRUE)
+
+DefaultAssay(s_obj) <- "RNA"
+DotPlot(object = s_obj, features = o_fuco_genes)
+plot_ofuco <- DotPlot(object = s_obj, features = o_fuco_genes)
+plot_data_ofuco <- plot_ofuco$data %>% 
+  select(pct.exp, id)
+
+write.csv(plot_data_ofuco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/ofuco.csv", row.names = TRUE)
+
+#o-glucosylation
+FeaturePlot(s_obj, features = o_gluco_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+
+o_gluco_genes <- c("rumi", "shams", "CG11388")
+
+subsample_ogluco <- subset(s_obj, features = o_gluco_genes)
+avg_exp_subsample_ogluco <- AverageExpression(subsample_ogluco)
+
+df4 <- as.data.frame(as.matrix(avg_exp_subsample_ogluco[["RNA"]]))
+write.csv(df4,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/oglucosylation_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = o_gluco_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+aggexp_o_gluco <- AggregateExpression(s_obj, features = o_gluco_genes)
+df4_1 <- as.data.frame(as.matrix(aggexp_o_gluco[["RNA"]]))
+write.csv(df4_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/ogluco_list_agg.csv", row.names = TRUE)
+
+DefaultAssay(s_obj) <- "RNA"
+DotPlot(s_obj, dot.scale = 8, features = o_gluco_genes)
+plot_ogluco <- DotPlot(object = s_obj, features = o_gluco_genes)
+plot_data_ogluco <- plot_ogluco$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_ogluco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/ogluco.csv", row.names = TRUE)
+
+VlnPlot(s_obj, features = "CG11388")
+VlnPlot(s_obj, features = "CG11388", log = TRUE)
+ScaleData(s_obj, features = all.genes)
+DefaultAssay(s_obj) <- "SCT"
+DoHeatmap(s_obj, features = c("CG11388"), size = 2.5, angle = 55, group.bar.height = 0.01)
+
+
+#o-mannosylation
+FeaturePlot(s_obj, features = o_manno_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+
+o_manno_genes <- c("rt", "tw", "CG15651", "Dg")
+
+subsample_omanno <- subset(s_obj, features = o_manno_genes)
+avg_exp_subsample_omanno <- AverageExpression(subsample_omanno)
+
+df5 <- as.data.frame(as.matrix(avg_exp_subsample_omanno[["RNA"]]))
+write.csv(df5,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/omannosylation_list.csv", row.names = TRUE)
+
+DefaultAssay(s_obj) <- "SCT"
+DoHeatmap(s_obj, features = o_manno_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+
+aggexp_o_manno <- AggregateExpression(s_obj, features = o_manno_genes)
+df5_1 <- as.data.frame(as.matrix(aggexp_o_manno[["RNA"]]))
+write.csv(df5_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/omanno_list_agg.csv", row.names = TRUE)
+
+DefaultAssay(s_obj) <- "RNA"
+DotPlot(object = s_obj, features = o_manno_genes)
+plot_omanno <- DotPlot(object = s_obj, features = o_manno_genes)
+plot_data_omanno <- plot_omanno$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_omanno,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/omanno.csv", row.names = TRUE)
+
+
+#glycosaminoglycans
+FeaturePlot(s_obj, features = glycosaminoglycan_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+
+glycosaminoglycan_genes <- c("oxt", "beta4GalT7", "beta3GalTII", "GlcAT-I", "botv", "ttv", "CG12913", "CG9220", "CG43313", "sfl", "Hsepi", "Hs2st", "Hs6st", "Hs3st-A", "Hs3st-B", "Sdc", "dally", "dlp", "trol", "wdp", "kon")
+
+subsample_glycoamin <- subset(s_obj, features = glycosaminoglycan_genes)
+avg_exp_subsample_glycoamin <- AverageExpression(subsample_glycoamin)
+
+df6 <- as.data.frame(as.matrix(avg_exp_subsample_glycoamin[["RNA"]]))
+write.csv(df6,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/glycosaminoglycans_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = glycosaminoglycan_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+
+aggexp_glycosamin <- AggregateExpression(s_obj, features = glycosaminoglycan_genes)
+df6_1 <- as.data.frame(as.matrix(aggexp_glycosamin[["RNA"]]))
+write.csv(df6_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/glycosaminoglycan_list_agg.csv", row.names = TRUE)
+
+DefaultAssay(s_obj)
+DefaultAssay(s_obj) <- "RNA"
+DotPlot(object = s_obj, features = glycosaminoglycan_genes)
+plot_GAG <- DotPlot(object = s_obj, features = glycosaminoglycan_genes)
+plot_data_GAG <- plot_GAG$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_GAG,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/GAG.csv", row.names = TRUE)
+
+
+#GSL
+FeaturePlot(s_obj, features = gsl_genes, min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+
+gsl_genes <- c("egh", "brn", "beta4GalNAcTB", "alpha4GT1")
+
+subsample_gsl <- subset(s_obj, features = gsl_genes)
+avg_exp_subsample_gsl <- AverageExpression(subsample_gsl)
+
+df7 <- as.data.frame(as.matrix(avg_exp_subsample_gsl[["RNA"]]))
+write.csv(df7,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/gsl_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = gsl_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+aggexp_gsl <- AggregateExpression(s_obj, features = gsl_genes)
+df7_1 <- as.data.frame(as.matrix(aggexp_gsl[["RNA"]]))
+write.csv(df7_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/gsl_list_agg.csv", row.names = TRUE)
+
+DefaultAssay(s_obj) <- "RNA"
+DotPlot(object = s_obj, features = gsl_genes)
+plot_gsl <- DotPlot(object = s_obj, features = gsl_genes)
+plot_data_gsl <- plot_gsl$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_gsl,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/gsl.csv", row.names = TRUE)
+
+
+#selectins
+FeaturePlot(s_obj, features = c('fw'), min.cutoff = 'q1', pt.size = 1, order = TRUE)
+
+selectin_genes <- c("fw")
+
+subsample_selectin <- subset(s_obj, features = selectin_genes)
+avg_exp_subsample_selectin <- AverageExpression(subsample_selectin)
+
+df8 <- as.data.frame(as.matrix(avg_exp_subsample_selectin[["RNA"]]))
+write.csv(df8,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/selectin_list.csv", row.names = TRUE)
+
+DoHeatmap(s_obj, features = selectin_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+aggexp_selectin <- AggregateExpression(s_obj, features = selectin_genes)
+df8_1 <- as.data.frame(as.matrix(aggexp_selectin[["RNA"]]))
+write.csv(df8_1,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/selectin_list_agg.csv", row.names = TRUE)
+
+DefaultAssay(s_obj) <- "RNA"
+DotPlot(object = s_obj, features = selectin_genes)
+plot_selectin <- DotPlot(object = s_obj, features = selectin_genes)
+plot_data_selectin <- plot_selectin$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_nglyco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/selectin.csv", row.names = TRUE)
+
+#c-selectins
+c_lectin_genes <- c("Acp29AB", "CG2839", "CG4115", "CG6055", "CG7763", "CG8343", "CG9095", "CG11211", 
+                    "CG12111", "CG13086", "CG13587", "CG14499", "CG14500", "CG14866", "CG15358", "CG15765",
+                    "CG15818", "CG34033", "CG43055", "CG43797", "Cont", "lectin-21Ca", "lectin-21Cb", "lectin-22C",
+                    "lectin-24A", "lectin-24Db", "lectin-28C", "lectin-29Ca", "lectin-30A", "lectin-33A",
+                    "lectin-37Da", "lectin-37Db", "lectin-46Ca", "lectin-46Cb", "Lectin-galC1", "nw", "rgn", "slf", "tfc", "Sfp24F")
+FeaturePlot(s_obj, features = c_lectin_genes, max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+DotPlot(object = s_obj, features = c_lectin_genes)
+plot_selectin <- DotPlot(object = s_obj, features = selectin_genes)
+plot_data_selectin <- plot_selectin$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_nglyco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/selectin.csv", row.names = TRUE)
+DoHeatmap(s_obj, features = c_lectin_genes, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+#other_carb_binding
+other_carb_binding <- c("ctg", "Mp", "CG42402", "CG13950", "nesd", "CG13321", "CG30148", "CG11374",
+                        "Plod", "CG14879", "galectin", "bark", "Lerp", "GNBP-like 3", "Cirl", "glec",
+                        "GNBP3", "GNBP2", "Tmep", "GNBP1", "CG12780", "ergic53", "CG5510", "CG1371", "CG9257", 
+                        "EMC7", "Sr-CI", "Pex23", "CG8460", "CG9394", "betaGlu", "CG15117", "CG18135",
+                        "CG11619", "LManII", "LManIII", "LManIV", "Fuca", "LManVI", "LManV", "LManI",
+                        "CG2818", "CG3942", "Galm2", "CG9008", "CG10996", "CG4988", "CG32445", "Galm1")
+FeaturePlot(s_obj, features = other_carb_binding, max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+DotPlot(object = s_obj, features = other_carb_binding)
+plot_selectin <- DotPlot(object = s_obj, features = selectin_genes)
+plot_data_selectin <- plot_selectin$data %>% 
+  select(pct.exp, id)
+write.csv(plot_data_nglyco,"C:/Users/TopLab/Desktop/Gencay/Anastasia - Larval Eye Disc Analysis/Raja-2023-2/percentage of cells expressed dotplots/selectin.csv", row.names = TRUE)
+DoHeatmap(s_obj, features = other_carb_binding, size = 2.5, angle = 55, group.bar.height = 0.01)
+
+#finding highly mitotic cells
+FeaturePlot(s_obj, features = "nFeature_RNA", pt.size = 1, order = TRUE, label = TRUE)
+FeaturePlot(s_obj, features = "nCount_RNA", pt.size = 1, order = TRUE, label = TRUE)
+FeaturePlot(s_obj, features = c("Myt1"), pt.size = 1, order = TRUE, label = TRUE)
+FeaturePlot(s_obj, features = c("cid"), pt.size = 1, order = TRUE, label = TRUE)
+FeaturePlot(s_obj, features = c("PCNA"), pt.size = 1, order = TRUE, label = TRUE)
+FeaturePlot(s_obj, features = c("Mtor"), pt.size = 1, order = TRUE, label = TRUE)
+FeaturePlot(s_obj, features = c("RPA3"), pt.size = 1, order = TRUE, label = TRUE)
+
+DimPlot(s_obj2, reduction = "umap", label = TRUE)
+s.genes
+g2m.genes
+s.genes <- cc.genes$s.genes
+s.genes_droso <- c("Mcm5", "PCNA", "Ts", "Fen1", "Mcm2", "Mcm4", "RnrL", "Psf2", "Mcm6", "l(2)dtl", "	DNApol-alpha50")
+g2m.genes <- cc.genes$g2m.genes
+g2m.genes_droso <- c("Dsp1", "Cdk1", "CTCF", "Top2", "aurA", "scra", "cmet", "twe")
+s_obj2 <- CellCycleScoring(s_obj2, s.features = s.genes_droso, g2m.features = g2m.genes_droso, set.ident = FALSE)
+head(s_obj2[[]])
+RidgePlot(s_obj2, features = c("PCNA", "Top2", "Mcm6", "futsch"), ncol = 2)
+s_obj2 <- RunPCA(s_obj2, features = c(s.genes_droso, g2m.genes_droso))
+
+cell_identity_cycle <- table(s_obj2@active.ident, s_obj2@meta.data$Phase)
+cell_identity_cycle_mtx <- as.data.frame.matrix(cell_identity_cycle) 
+x <- rownames(cell_identity_cycle_mtx)
+y <- colnames(cell_identity_cycle_mtx)
+group <- colnames(cell_identity_cycle_mtx)
+ggplot(cell_identity_cycle_mtx, aes(fill = group, x = x)) + 
+  geom_bar(position="stack", stat="identity")
+
+t(cell_identity_cycle)
+cell_identity_cycle_mtx <- t(cell_identity_cycle_mtx)
+
+write.table(cell_identity_cycle, file = "cell_cycle_identity.txt", sep = "\t",
+            row.names = TRUE, col.names = TRUE)
+
+
+
+
+
+#miscellanoeus Anastasia poster
+DefaultAssay(s_obj) <- "RNA"
+DefaultAssay(s_obj) <- "SCT"
+FeaturePlot(s_obj, cols = c('gray72','dodgerblue4'), features = c("mirr", "ara", "caup"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+FeaturePlot(s_obj, cols = c('gray72','blue','red', 'green'), features = c("ara", "caup"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE, blend = TRUE)
+FeaturePlot(s_obj, features = c("fng", "Ser", "Slp", "dpp", "pnr", "Dl"), min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE)
+DoHeatmap(s_obj, features = c("mirr", "ara", "caup"), size = 2.5, angle = 55, group.bar.height = 0.01, slot = "scale.data")
+DotPlot(object = s_obj, cols = c("red", "blue"), features = c("mirr", "ara", "caup"), scale.by = "radius")
+
+subs_obj <- subset(s_obj, mirr > 0 | ara > 0 | caup > 0) 
+DoHeatmap(subs_obj, features = c("mirr", "ara", "caup"), size = 2.5, angle = 55, group.bar.height = 0.01, slot = "scale.data")
+
+#Arzu hoca - hacettepe proje
+hacettepe_genes <- c("Acp62f", "byn", "CG5890", "CG34354", "sm", "wake", "tou")
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = hacettepe_genes, min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+DotPlot(object = s_obj, cols = c("gray", "blue"), features = hacettepe_genes, scale.by = "radius")
+DefaultAssay(s_obj) <- "RNA"
+DoHeatmap(s_obj, features = hacettepe_genes, size = 2.5, angle = 55, group.bar.height = 0.01, slot = "scale.data")
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = c("CG34170"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = c("Rpt4R", "CG11588", "SdhAL", "CG5883", "CG44837"), max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = c("byn"), max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+
+
+
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = c("uzip"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = c("uzip"), min.cutoff = 'q1', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = c("uzip"), min.cutoff = 'q1', max.cutoff = 'q97', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+DotPlot(object = s_obj, cols = c("blue", "red"), features = c("uzip"), scale.by = "radius")
+VlnPlot(s_obj, features = c("uzip"), add.noise = TRUE)
+DefaultAssay(s_obj) <- "SCT"
+DefaultAssay(s_obj) <- "RNA"
+DoHeatmap(s_obj, features = c("uzip"), size = 2.5, angle = 55, group.bar.height = 0.01, slot = "scale.data", raster = FALSE) +  scale_fill_gradientn(colors = rev(RColorBrewer::brewer.pal(n = 10, name = "RdBu")) ) +  guides(color=FALSE)
+RidgePlot(s_obj, features = c("uzip"), ncol = 2)
+
+#Anastasia Poster Images
+DefaultAssay(s_obj) <- "RNA"
+DefaultAssay(s_obj) <- "SCT"
+
+FeaturePlot(s_obj, cols = c('gray50','cyan1'), label.color = "gray80", features = c("ara"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, label = TRUE, keep.scale = 'feature') + DarkTheme()
+FeaturePlot(s_obj, cols = c('gray50','gold2'), label.color = "gray80", features = c("mirr"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, label = TRUE) + DarkTheme()
+FeaturePlot(s_obj, cols = c('gray50','deeppink1'), label.color = "gray80", features = c("caup"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, label = TRUE) + DarkTheme()
+
+plot1 <- FeaturePlot(s_obj, cols = c('gray50','cyan1','gold1'), label.color = "gray80", features = c("ara", "mirr"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, label = TRUE, combine = FALSE, blend = TRUE, blend.threshold = 0.01) 
+plot1[[3]] + DarkTheme()
+plot2 <- FeaturePlot(s_obj, cols = c('gray50','cyan1','deeppink1'), label.color = "gray80", features = c("ara", "caup"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, label = TRUE, combine = FALSE, blend = TRUE, blend.threshold = 0.5) 
+plot2[[3]] + DarkTheme()
+plot3 <- FeaturePlot(s_obj, cols = c('gray50','deeppink1','gold1'), label.color = "gray80", features = c("caup", "mirr"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, label = TRUE, combine = FALSE, blend = TRUE) + DarkTheme()
+plot3[[3]] + DarkTheme()
+
+
+
+#lectins
+lectins <- c("Acp29AB", "CG2839", "CG4115", "CG6055", "CG7763", "CG8343", "CG9095", "CG11211", "CG12111", "CG13086", "CG13587", "CG14499", "CG14500",
+               "CG14866", "CG15358", "CG15765", "CG15818", "CG34033", "CG43055", "CG43797", "Cont", "lectin-21Ca", "lectin-21Cb", "lectin-22C", "lectin-24A", "lectin-24Db", "lectin-28C",
+               "lectin-29Ca", "lectin-30A", "lectin-33A", "lectin-37Da", "lectin-37Db", "lectin-46Ca", "lectin-46Cb", "Lectin-galC1", "nw", "rgn", "slf", "tfc")
+panther_lectins <- readr::read_tsv("C:/Users/TopLab/Desktop/carbohydrate binding.tsv")
+FeaturePlot(s_obj, cols = c('gray72','blue'), features = lectins, max.cutoff = 'q95', pt.size = 1, order = TRUE, combine = FALSE, label = TRUE)
+DotPlot(object = s_obj, cols = c("gray", "blue"), features = lectins, scale.by = "radius")
+DefaultAssay(s_obj) <- "SCT"
+DoHeatmap(s_obj, features = lectins, size = 2.5, angle = 55, group.bar.height = 0.01, slot = "scale.data")
+
+#3d UMAP
+sobj_3d <- RunUMAP(s_obj,
+                            dims = 1:10,
+                            n.components = 3L)
+sobj_3d <- Embeddings(object = s_obj, reduction = "umap")
+UMAP_1 <- sobj_3d[["umap"]]@cell.embeddings[,1]
+UMAP_2 <- sobj_3d[["umap"]]@cell.embeddings[,2]
+UMAP_3 <- sobj_3d[["umap"]]@cell.embeddings[,3]
+plotting.data <- FetchData(object = sobj_3d, vars = c("UMAP_1", "UMAP_2", "UMAP_3", "active.ident"))
+
+#correlation
+BiocManager::install("ggpubr")
+library(ggpubr)
+matrix_to_expression_df<- function(x, obj){
+  df<- x %>%
+    as.matrix() %>% 
+    as.data.frame() %>%
+    tibble::rownames_to_column(var= "gene") %>%
+    tidyr::pivot_longer(cols = -1, names_to = "cell", values_to = "expression") %>%
+    tidyr::pivot_wider(names_from = "gene", values_from = expression) %>%
+    left_join(obj@meta.data %>% 
+                tibble::rownames_to_column(var = "cell"))
+  return(df)
+}
+get_expression_data<- function(obj, assay = "RNA", slot = "data", 
+                               genes = NULL, cells = NULL){
+  if (is.null(genes) & !is.null(cells)){
+    df<- GetAssayData(obj, assay = assay, slot = slot)[, cells, drop = FALSE] %>%
+      matrix_to_expression_df(obj = obj)
+  } else if (!is.null(genes) & is.null(cells)){
+    df <- GetAssayData(obj, assay = assay, slot = slot)[genes, , drop = FALSE] %>%
+      matrix_to_expression_df(obj = obj)
+  } else if (is.null(genes & is.null(cells))){
+    df <- GetAssayData(obj, assay = assay, slot = slot)[, , drop = FALSE] %>%
+      matrix_to_expression_df(obj = obj)
+  } else {
+    df<- GetAssayData(obj, assay = assay, slot = slot)[genes, cells, drop = FALSE] %>%
+      matrix_to_expression_df(obj = obj)
+  }
+  return(df)
+}
+
+axis1 <- c(c_lectin_genes, other_carb_binding)
+axis2 <- c(gsl_genes, n_glyco_genes, o_fuco_genes, o_gluco_genes, o_glyco_genes, o_manno_genes)
+genes <- c(axis1, axis2)
+library(dplyr)
+counts.df <- s_obj@assays$RNA@counts %>% as.matrix %>% t %>% as.data.frame
+counts.df <- tibble::rownames_to_column(counts.df, "cellnames")
+clusterassignemnts <- data.frame(s_obj@active.ident)
+clusterassignemnts <- tibble::rownames_to_column(clusterassignemnts, "cellnames")
+counts.df <- merge(clusterassignemnts, counts.df, by = "cellnames")
+rownames(counts.df) <- counts.df$cellnames
+#counts.df$cellnames <- NULL
+colnames(counts.df)[1] <- c("clusters")
+
+expression_data <- get_expression_data(s_obj, genes = genes)
+expression_data <- as.data.frame(s_obj$RNA, genes = Seurat::VariableFeatures(x), fix_names = TRUE)
+ggplot(counts.df, aes(x= "ctg", y = "Mp")) + 
+  geom_smooth(method="lm") +
+  geom_point(size = 0.8) +
+  facet_wrap(~clusters) +
+  ggpubr::stat_cor(method = "pearson")
+
+BiocManager::install("plotly")
+library(plotly)
+plotting.data <- FetchData(object = s_obj, vars = c("tSNE_1", "tSNE_2", "tSNE_3", "nw"))
+plot_ly(data = plotting.data, x = ~tSNE_1, y = ~tSNE_2, z = ~tSNE_3, color = ~nw,
+        type = "scatter3d", mode = "markers")
+
+
+#Genie3 algorithm to decipher co-expression matrices
+BiocManager::install(c("AUCell", "RcisTarget"))
+BiocManager::install(c("GENIE3")) 
+BiocManager::install(c("zoo", "mixtools", "rbokeh"))
+BiocManager::install(c("DT", "NMF", "ComplexHeatmap", "R2HTML", "Rtsne"))
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("aertslab/SCopeLoomR", build_vignettes = TRUE)
+BiocManager::install("Rtools")
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("aertslab/SCENIC") 
+packageVersion("SCENIC")
+install.packages("pacman")
+library(pacman)
+pacman::p_load("SCENIC", "ScopeLoomR", "RCisTarget", "zoo", "mixtools", "rbokeh", "DT", "NMF", "ComplexHeatmap", "R2HTML", "Rtsne", "dplyr", "tidyverse")
+BiocManager::install("SCENIC", force = TRUE)
+library(SCENIC)
+BiocManager::install("GENIE3")
+library(GENIE3)
+browseVignettes("GENIE3")
+counts.df <- s_obj@assays$RNA@counts %>% as.matrix %>% as.data.frame
+counts.df <- tibble::rownames_to_column(counts.df, "cellnames")
+clusterassignemnts <- data.frame(s_obj@active.ident)
+clusterassignemnts <- tibble::rownames_to_column(clusterassignemnts, "cellnames")
+counts.df <- merge(clusterassignemnts, counts.df, by = "cellnames")
+rownames(counts.df) <- counts.df$cellnames
+counts.df$cellnames <- NULL
+colnames(counts.df)[1] <- c("clusters")
+
+
+geneofinterests <- c("Acp29AB", "CG2839", "CG4115", "CG6055", "CG7763", "CG8343", "CG9095", "CG11211", "CG12111", "CG13086", "CG13587", "CG14499", "CG14500",
+                     "CG14866", "CG15358", "CG15765", "CG15818", "CG34033", "CG43055", "CG43797", "Cont", "lectin-21Ca", "lectin-21Cb", "lectin-22C", "lectin-24A", "lectin-24Db", "lectin-28C",
+                     "lectin-29Ca", "lectin-30A", "lectin-33A", "lectin-37Da", "lectin-37Db", "lectin-46Ca", "lectin-46Cb", "Lectin-galC1", "nw", "rgn", "slf", "tfc", "oxt", "beta4GalT7", "beta3GalTII", "GlcAT-I", "botv", "ttv", "CG12913", "CG9220", "CG43313", "sfl", "Hsepi", "Hs2st", "Hs6st", "Hs3st-A", "Hs3st-B", "Sdc", "dally", "dlp", "trol", "wdp", "kon")
+geneofinterests[which(!geneofinterests %in% counts.df)]
+
+view(geneofinterests)
+org <- "dmel" 
+dbDir <- "C:/Users/TopLab/Desktop/Gencay"
+myDatasetTitle <- "eyedisc analysis" 
+data(defaultDbNames)
+dbs <- defaultDbNames[[org]]
+scenicOptions <- initializeScenic(org = org, dbDir = dbDir, dbs = dbs, datasetTitle = myDatasetTitle, nCores=10) 
+countmatc <- as.matrix(counts.df)
+exprMat_filtered <- counts.df[geneofinterests, ]
+dim(exprMat_filtered)
+corrmat <- runCorrelation(exprMat_filtered, scenicOptions = scenicOptions)
+
+runGenie3(countmatc, scenicOptions = scenicOptions)
+weightmatrix <- GENIE3(exprMat_filtered)
+
+
+org <- "dmel" 
+dbDir <- "C:/Users/TopLab/Desktop/Single Cell Analysis Test Folder/antenna_SeuratBased"
+myDatasetTitle <- "antenna analysis" 
+data(defaultDbNames)
+dbs <- defaultDbNames[[org]]
+scenicOptions <- initializeScenic(org = org, dbDir = dbDir, dbs = dbs, datasetTitle = myDatasetTitle, nCores=10) 
+
+library(SCopeLoomR)
+loomPath <- "s_fca_biohub_antenna_10x.loom"
+loom <- open_loom(loomPath) # We recommend to open files as read-only (mode="r"). However, since this is an old-format loom file, it needs write access to update it.
+exprMat <- get_dgem(loom)
+cellInfo <- get_cell_annotation(loom)
+close_loom(loom)
+
+scenicOptions@inputDatasetInfo$cellInfo <- "int/cellInfo.Rds"
+scenicOptions@inputDatasetInfo$colVars <- "int/colVars.Rds"
+# Databases:
+# scenicOptions@settings$dbs <- c("mm9-5kb-mc8nr"="mm9-tss-centered-5kb-10species.mc8nr.feather")
+# scenicOptions@settings$db_mcVersion <- "v8"
+
+genesKept <- geneFiltering(exprMat, scenicOptions=scenicOptions,
+                           minCountsPerGene=3*.01*ncol(exprMat),
+                           minSamples=ncol(exprMat)*.01)
+
+interestingGenes <- c("Sox9", "Sox10", "Dlx5")
+interestingGenes[which(!interestingGenes %in% genesKept)]
+
+view(genesKept)
+
+exprMat_filtered <- exprMat[genesKept, ]
+dim(exprMat_filtered)
+runCorrelation(exprMat_filtered, scenicOptions)
+
+BiocManager::install("doRNG")
+library(doRNG)
+
+#run genie3
+regulators1 <- c("CkIIalpha-i1", "Abd-B")
+
+#export the values to the grnboost for faster analysis
+exportsForArboreto(exprMat, scenicOptions, dir = "int")
+
+
+
+#splitted list genie3
+
+genesSplit <- split(sort(rownames(exprMat_filtered)), 1:10)
+lenghts(genesSplit)
+
+inputTFs <- "R-1.1_inputTFs.txt"
+inputTFs <- read.csv("R-1.1_inputTFs.txt", header = FALSE)
+vectorTFs <- as.vector(inputTFs)
+
+
+for(i in 1:length(genesSplit))
+{
+  print(i)
+  set.seed(93827)
+  weightMatrix <- GENIE3(exprMat, regulators = vectorTFs, nCores=24, targets=genesSplit[[i]])
+  save(weightMatrix, file=paste0("GENIE3_weightMat_",i,".RData"))
+}
+
+# Merge results:
+library(GENIE3)
+linkList_list <- list()
+for(i in 1:10)
+{
+  load(paste0("int/1.3_GENIE3_weightMatrix_",i,".RData"))
+  linkList_list[[i]] <- getLinkList(weightMatrix)
+}
+length(linkList_list)
+sapply(linkList_list, nrow)
+
+linkList <- do.call(rbind, linkList_list)
+colnames(linkList) <- c("TF", "Target", "weight")
+linkList <- linkList[order(linkList[,"weight"], decreasing=TRUE),]
+linkList <- linkList[which(linkList[,"weight"]>0),]
+nrow(linkList)
+head(linkList)
+save(linkList, file="GENIE3_linkList.RData")
+
+#basic genie3 run
+library(pacman)
+pacman::p_load("SCENIC", "ScopeLoomR", "RCisTarget", "zoo", "mixtools", "rbokeh", "DT", "NMF", "ComplexHeatmap", "R2HTML", "Rtsne", "dplyr", "tidyverse", "doParallel", "doRNG")
+exprMat_filtered <- log2(exprMat_filtered+1) 
+runGenie3(exprMat_filtered, scenicOptions, nParts = 100)
+
+cores<-detectCores()
+
+
+new_blend_func <- function (object, features, dims = c(1, 2), cells = NULL, cols = if (blend) {
+  c("lightgrey", "#ff0000", "#00ff00")
+} else {
+  c("lightgrey", "blue")
+}, pt.size = NULL, alpha = 1, order = FALSE, min.cutoff = NA, 
+max.cutoff = NA, reduction = NULL, split.by = NULL, keep.scale = "feature", 
+shape.by = NULL, slot = "data", blend = FALSE, blend.threshold = 0.5, 
+label = FALSE, label.size = 4, label.color = "black", repel = FALSE, 
+ncol = NULL, coord.fixed = FALSE, by.col = TRUE, sort.cell = deprecated(), 
+interactive = FALSE, combine = TRUE, raster = NULL, raster.dpi = c(512, 
+                                                                   512)) 
+{
+  if (is_present(arg = sort.cell)) {
+    deprecate_stop(when = "4.9.0", what = "FeaturePlot(sort.cell = )", 
+                   with = "FeaturePlot(order = )")
+  }
+  if (isTRUE(x = interactive)) {
+    return(IFeaturePlot(object = object, feature = features[1], 
+                        dims = dims, reduction = reduction, slot = slot))
+  }
+  if (!is.null(x = keep.scale)) {
+    keep.scale <- arg_match0(arg = keep.scale, values = c("feature", 
+                                                          "all"))
+  }
+  no.right <- theme(axis.line.y.right = element_blank(), axis.ticks.y.right = element_blank(), 
+                    axis.text.y.right = element_blank(), axis.title.y.right = element_text(face = "bold", 
+                                                                                           size = 14, margin = margin(r = 7)))
+  reduction <- reduction %||% DefaultDimReduc(object = object)
+  if (!is_integerish(x = dims, n = 2L, finite = TRUE) && !all(dims > 
+                                                              0L)) {
+    abort(message = "'dims' must be a two-length integer vector")
+  }
+  if (isTRUE(x = blend) && length(x = features) != 2) {
+    abort(message = "Blending feature plots only works with two features")
+  }
+  if (isTRUE(x = blend)) {
+    default.colors <- eval(expr = formals(fun = FeaturePlot)$cols)
+    cols <- switch(EXPR = as.character(x = length(x = cols)), 
+                   `0` = {
+                     warn(message = "No colors provided, using default colors")
+                     default.colors
+                   }, `1` = {
+                     warn(message = paste("Only one color provided, assuming", 
+                                          sQuote(x = cols), "is double-negative and augmenting with default colors"))
+                     c(cols, default.colors[2:3])
+                   }, `2` = {
+                     warn(message = paste("Only two colors provided, assuming specified are for features and agumenting with", 
+                                          sQuote(default.colors[1]), "for double-negatives", 
+                     ))
+                     c(default.colors[1], cols)
+                   }, `3` = cols, {
+                     warn(message = "More than three colors provided, using only first three")
+                     cols[1:3]
+                   })
+  }
+  if (isTRUE(x = blend) && length(x = cols) != 3) {
+    abort("Blending feature plots only works with three colors; first one for negative cells")
+  }
+  dims <- paste0(Key(object = object[[reduction]]), dims)
+  cells <- cells %||% Cells(x = object[[reduction]])
+  data <- FetchData(object = object, vars = c(dims, "ident", 
+                                              features), cells = cells, slot = slot)
+  if (ncol(x = data) < 4) {
+    abort(message = paste("None of the requested features were found:", 
+                          paste(features, collapse = ", "), "in slot ", slot))
+  }
+  else if (!all(dims %in% colnames(x = data))) {
+    abort(message = "The dimensions requested were not found")
+  }
+  features <- setdiff(x = names(x = data), y = c(dims, "ident"))
+  min.cutoff <- mapply(FUN = function(cutoff, feature) {
+    return(ifelse(test = is.na(x = cutoff), yes = min(data[, 
+                                                           feature]), no = cutoff))
+  }, cutoff = min.cutoff, feature = features)
+  max.cutoff <- mapply(FUN = function(cutoff, feature) {
+    return(ifelse(test = is.na(x = cutoff), yes = max(data[, 
+                                                           feature]), no = cutoff))
+  }, cutoff = max.cutoff, feature = features)
+  check.lengths <- unique(x = vapply(X = list(features, min.cutoff, 
+                                              max.cutoff), FUN = length, FUN.VALUE = numeric(length = 1)))
+  if (length(x = check.lengths) != 1) {
+    abort(message = "There must be the same number of minimum and maximum cuttoffs as there are features")
+  }
+  names(x = min.cutoff) <- names(x = max.cutoff) <- features
+  brewer.gran <- ifelse(test = length(x = cols) == 1, yes = brewer.pal.info[cols, 
+  ]$maxcolors, no = length(x = cols))
+  for (i in seq_along(along.with = features)) {
+    f <- features[i]
+    data.feature <- data[[f]]
+    min.use <- SetQuantile(cutoff = min.cutoff[f], data = data.feature)
+    max.use <- SetQuantile(cutoff = max.cutoff[f], data = data.feature)
+    data.feature[data.feature < min.use] <- min.use
+    data.feature[data.feature > max.use] <- max.use
+    if (brewer.gran != 2) {
+      data.feature <- if (all(data.feature == 0)) {
+        rep_len(x = 0, length.out = length(x = data.feature))
+      }
+      else {
+        as.numeric(x = as.factor(x = cut(x = as.numeric(x = data.feature), 
+                                         breaks = 2)))
+      }
+    }
+    data[[f]] <- data.feature
+  }
+  data$split <- if (is.null(x = split.by)) {
+    RandomName()
+  }
+  else {
+    switch(EXPR = split.by, ident = Idents(object = object)[cells, 
+                                                            drop = TRUE], object[[split.by, drop = TRUE]][cells, 
+                                                                                                          drop = TRUE])
+  }
+  if (!is.factor(x = data$split)) {
+    data$split <- factor(x = data$split)
+  }
+  if (!is.null(x = shape.by)) {
+    data[, shape.by] <- object[[shape.by, drop = TRUE]]
+  }
+  plots <- vector(mode = "list", length = ifelse(test = blend, 
+                                                 yes = 4, no = length(x = features) * length(x = levels(x = data$split))))
+  xlims <- c(floor(x = min(data[, dims[1]])), ceiling(x = max(data[, 
+                                                                   dims[1]])))
+  ylims <- c(floor(min(data[, dims[2]])), ceiling(x = max(data[, 
+                                                               dims[2]])))
+  if (blend) {
+    ncol <- 4
+    color.matrix <- BlendMatrix(two.colors = cols[2:3], 
+                                col.threshold = blend.threshold, negative.color = cols[1])
+    cols <- cols[2:3]
+    colors <- list(color.matrix[, 1], color.matrix[1, ], 
+                   as.vector(x = color.matrix))
+  }
+  for (i in 1:length(x = levels(x = data$split))) {
+    ident <- levels(x = data$split)[i]
+    data.plot <- data[as.character(x = data$split) == ident, 
+                      , drop = FALSE]
+    if (isTRUE(x = blend)) {
+      features <- features[1:2]
+      no.expression <- features[colMeans(x = data.plot[, 
+                                                       features]) == 0]
+      if (length(x = no.expression) != 0) {
+        abort(message = paste("The following features have no value:", 
+                              paste(no.expression, collapse = ", ")))
+      }
+      data.plot <- cbind(data.plot[, c(dims, "ident")], 
+                         BlendExpression(data = data.plot[, features[1:2]]))
+      features <- colnames(x = data.plot)[4:ncol(x = data.plot)]
+    }
+    for (j in 1:length(x = features)) {
+      feature <- features[j]
+      if (isTRUE(x = blend)) {
+        cols.use <- as.numeric(x = as.character(x = data.plot[, 
+                                                              feature])) + 1
+        cols.use <- colors[[j]][sort(x = unique(x = cols.use))]
+      }
+      else {
+        cols.use <- NULL
+      }
+      data.single <- data.plot[, c(dims, "ident", feature, 
+                                   shape.by)]
+      plot <- SingleDimPlot(data = data.single, dims = dims, 
+                            col.by = feature, order = order, pt.size = pt.size, 
+                            alpha = alpha, cols = cols.use, shape.by = shape.by, 
+                            label = FALSE, raster = raster, raster.dpi = raster.dpi) + 
+        scale_x_continuous(limits = xlims) + scale_y_continuous(limits = ylims) + 
+        theme_cowplot() + CenterTitle()
+      if (isTRUE(x = label)) {
+        plot <- LabelClusters(plot = plot, id = "ident", 
+                              repel = repel, size = label.size, color = label.color)
+      }
+      if (length(x = levels(x = data$split)) > 1) {
+        plot <- plot + theme(panel.border = element_rect(fill = NA, 
+                                                         colour = "black"))
+        plot <- plot + if (i == 1) {
+          labs(title = feature)
+        }
+        else {
+          labs(title = NULL)
+        }
+        if (j == length(x = features) && !blend) {
+          suppressMessages(expr = plot <- plot + scale_y_continuous(sec.axis = dup_axis(name = ident), 
+                                                                    limits = ylims) + no.right)
+        }
+        if (j != 1) {
+          plot <- plot + theme(axis.line.y = element_blank(), 
+                               axis.ticks.y = element_blank(), axis.text.y = element_blank(), 
+                               axis.title.y.left = element_blank())
+        }
+        if (i != length(x = levels(x = data$split))) {
+          plot <- plot + theme(axis.line.x = element_blank(), 
+                               axis.ticks.x = element_blank(), axis.text.x = element_blank(), 
+                               axis.title.x = element_blank())
+        }
+      }
+      else {
+        plot <- plot + labs(title = feature)
+      }
+      if (!blend) {
+        plot <- plot + guides(color = NULL)
+        cols.grad <- cols
+        if (length(x = cols) == 1) {
+          plot <- plot + scale_color_brewer(palette = cols)
+        }
+        else if (length(x = cols) > 1) {
+          unique.feature.exp <- unique(data.plot[, feature])
+          if (length(unique.feature.exp) == 1) {
+            warn(message = paste0("All cells have the same value (", 
+                                  unique.feature.exp, ") of ", dQuote(x = feature)))
+            if (unique.feature.exp == 0) {
+              cols.grad <- cols[1]
+            }
+            else {
+              cols.grad <- cols
+            }
+          }
+          plot <- suppressMessages(expr = plot + scale_color_gradientn(colors = cols.grad, 
+                                                                       guide = "colorbar"))
+        }
+      }
+      if (!(is.null(x = keep.scale)) && keep.scale == 
+          "feature" && !blend) {
+        max.feature.value <- max(data[, feature])
+        min.feature.value <- min(data[, feature])
+        plot <- suppressMessages(plot & scale_color_gradientn(colors = cols, 
+                                                              limits = c(min.feature.value, max.feature.value)))
+      }
+      if (coord.fixed) {
+        plot <- plot + coord_fixed()
+      }
+      plot <- plot
+      plots[[(length(x = features) * (i - 1)) + j]] <- plot
+    }
+  }
+  if (isTRUE(x = blend)) {
+    blend.legend <- BlendMap(color.matrix = color.matrix)
+    for (ii in 1:length(x = levels(x = data$split))) {
+      suppressMessages(expr = plots <- append(x = plots, 
+                                              values = list(blend.legend + scale_y_continuous(sec.axis = dup_axis(name = ifelse(test = length(x = levels(x = data$split)) > 
+                                                                                                                                  1, yes = levels(x = data$split)[ii], no = "")), 
+                                                                                              expand = c(0, 0)) + labs(x = features[1], 
+                                                                                                                       y = features[2], title = if (ii == 1) {
+                                                                                                                         paste("Color threshold:", blend.threshold)
+                                                                                                                       } else {
+                                                                                                                         NULL
+                                                                                                                       }) + no.right), after = 4 * ii - 1))
+    }
+  }
+  plots <- Filter(f = Negate(f = is.null), x = plots)
+  if (is.null(x = ncol)) {
+    ncol <- 2
+    if (length(x = features) == 1) {
+      ncol <- 1
+    }
+    if (length(x = features) > 6) {
+      ncol <- 3
+    }
+    if (length(x = features) > 9) {
+      ncol <- 4
+    }
+  }
+  ncol <- ifelse(test = is.null(x = split.by) || isTRUE(x = blend), 
+                 yes = ncol, no = length(x = features))
+  legend <- if (isTRUE(x = blend)) {
+    "none"
+  }
+  else {
+    split.by %iff% "none"
+  }
+  if (isTRUE(x = combine)) {
+    if (by.col && !is.null(x = split.by) && !blend) {
+      plots <- lapply(X = plots, FUN = function(x) {
+        return(suppressMessages(expr = x + theme_cowplot() + 
+                                  ggtitle("") + scale_y_continuous(sec.axis = dup_axis(name = ""), 
+                                                                   limits = ylims) + no.right))
+      })
+      nsplits <- length(x = levels(x = data$split))
+      idx <- 1
+      for (i in (length(x = features) * (nsplits - 1) + 
+                 1):(length(x = features) * nsplits)) {
+        plots[[i]] <- suppressMessages(expr = plots[[i]] + 
+                                         scale_y_continuous(sec.axis = dup_axis(name = features[[idx]]), 
+                                                            limits = ylims) + no.right)
+        idx <- idx + 1
+      }
+      idx <- 1
+      for (i in which(x = 1:length(x = plots)%%length(x = features) == 
+                      1)) {
+        plots[[i]] <- plots[[i]] + ggtitle(levels(x = data$split)[[idx]]) + 
+          theme(plot.title = element_text(hjust = 0.5))
+        idx <- idx + 1
+      }
+      idx <- 1
+      if (length(x = features) == 1) {
+        for (i in 1:length(x = plots)) {
+          plots[[i]] <- plots[[i]] + ggtitle(levels(x = data$split)[[idx]]) + 
+            theme(plot.title = element_text(hjust = 0.5))
+          idx <- idx + 1
+        }
+        ncol <- 1
+        nrow <- nsplits
+      }
+      else {
+        nrow <- split.by %iff% length(x = levels(x = data$split))
+      }
+      plots <- plots[c(do.call(what = rbind, args = split(x = 1:length(x = plots), 
+                                                          f = ceiling(x = seq_along(along.with = 1:length(x = plots))/length(x = features)))))]
+      plots <- wrap_plots(plots, ncol = nrow, nrow = ncol)
+      if (!is.null(x = legend) && legend == "none") {
+        plots <- plots & NoLegend()
+      }
+    }
+    else {
+      plots <- wrap_plots(plots, ncol = ncol, nrow = split.by %iff% 
+                            length(x = levels(x = data$split)))
+    }
+    if (!is.null(x = legend) && legend == "none") {
+      plots <- plots & NoLegend()
+    }
+    if (!(is.null(x = keep.scale)) && keep.scale == "all" && 
+        !blend) {
+      max.feature.value <- max(data[, features])
+      min.feature.value <- min(data[, features])
+      plots <- suppressMessages(plots & scale_color_gradientn(colors = cols, 
+                                                              limits = c(min.feature.value, max.feature.value)))
+    }
+  }
+  return(plots)
+}
+new_blend_func(s_obj, keep.scale = "all", cols = c('gray50','cyan1','gold1'), label.color = "gray80", features = c("mirr", "ara"), min.cutoff = 'q1', max.cutoff = 'q95', pt.size = 1, order = TRUE, label = TRUE, combine = FALSE, blend = TRUE, blend.threshold = 0.01)
+plot1[[3]]
